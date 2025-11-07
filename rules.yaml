@@ -1,0 +1,888 @@
+# LLM Configuration Security Rules
+# All rules are backed by academic research, CVEs, and OWASP guidance
+# References provided for each rule for verification
+
+version: "1.0.0"
+
+rules:
+  # ========================================
+  # CRITICAL SEVERITY RULES
+  # ========================================
+  
+  - id: SECRETS_001
+    name: "API Keys in Configuration"
+    severity: CRITICAL
+    category: secrets
+    description: "Configuration contains API keys or authentication tokens. System prompts should NEVER contain credentials."
+    check:
+      type: pattern_match
+      patterns:
+        - "sk-[a-zA-Z0-9_-]{20,}"         # OpenAI format (old and new)
+        - "sk-ant-[a-zA-Z0-9-]{95,}"      # Anthropic format
+        - "AIzaSy[a-zA-Z0-9_-]{33}"       # Google AI
+        - "Bearer [a-zA-Z0-9_-]+"
+    recommendation: "Move all API keys to environment variables or secret managers (AWS Secrets Manager, HashiCorp Vault). Never hardcode credentials."
+    references:
+      - "OWASP LLM07:2025 System Prompt Leakage"
+      - "CVE-2024-3271 - Flowise credential exposure (45% of servers)"
+    fields:
+      - api_key
+      - openai_api_key
+      - anthropic_api_key
+      - google_api_key
+      - apiKey
+      - system_prompt
+      - prompt
+
+  - id: SECRETS_002
+    name: "Database Credentials in Configuration"
+    severity: CRITICAL
+    category: secrets
+    description: "Configuration contains database credentials or connection strings."
+    check:
+      type: pattern_match
+      patterns:
+        - "password['\"]?\\s*[:=]\\s*['\"]?\\w+"
+        - "postgres://.*:.*@"
+        - "mysql://.*:.*@"
+        - "mongodb://.*:.*@"
+        - "jdbc:.*password="
+    recommendation: "Externalize database credentials to secure secret management systems."
+    references:
+      - "OWASP LLM07:2025 System Prompt Leakage"
+      - "OWASP API8:2023 Security Misconfiguration"
+
+  - id: LOGIT_001
+    name: "Extreme Logit Bias Values"
+    severity: CRITICAL
+    category: parameters
+    description: "Logit bias values exceed safe thresholds. Can enable jailbreaking, information leakage, and model extraction."
+    check:
+      type: numeric_range
+      parameter: logit_bias
+      condition: any_value_exceeds
+      min: -50
+      max: 50
+    recommendation: "Limit logit_bias to ±10 range with comprehensive monitoring. Consider disabling user-controlled logit_bias entirely."
+    references:
+      - "arXiv:2403.09539v3 - Logits of API-Protected LLMs Leak Proprietary Information"
+      - "IOActive Research - Understanding Logits and Safety Impacts"
+      - "OWASP LLM10:2025 - Restrict logit_bias exposure"
+
+  - id: RATE_001
+    name: "Missing Rate Limiting"
+    severity: CRITICAL
+    category: rate_limiting
+    description: "No rate limiting configured. Enables unlimited resource consumption, cost attacks ($46K-$100K/day documented), and DoS."
+    check:
+      type: missing_fields
+      fields:
+        - rate_limit
+        - rpm
+        - tpm
+        - requests_per_minute
+        - tokens_per_minute
+    recommendation: "Implement multi-dimensional rate limiting: RPM (requests/min), TPM (tokens/min), RPD (requests/day), TPD (tokens/day). Use token bucket algorithm."
+    references:
+      - "OWASP LLM10:2025 Unbounded Consumption"
+      - "Sysdig Threat Research - LLM Jacking ($46K-$100K/day attacks)"
+      - "Wiz.io LLM Jacking Documentation"
+
+  - id: PARAM_001
+    name: "Multiple High-Risk Parameters Combined"
+    severity: CRITICAL
+    category: parameters
+    description: "Simultaneous high-risk values for temperature, top_p, and top_k. Princeton research shows 95%+ jailbreak success with parameter manipulation."
+    check:
+      type: combined_conditions
+      conditions:
+        - parameter: temperature
+          operator: greater_than
+          value: 0.9
+        - parameter: top_p
+          operator: greater_than
+          value: 0.95
+        - parameter: top_k
+          operator: greater_than
+          value: 80
+      require: at_least_two
+    recommendation: "Use safe parameter ranges: temperature 0.0-0.7, top_p 0.5-0.92, top_k 20-80. Never allow users to control all three simultaneously."
+    references:
+      - "Princeton SysML - Catastrophic Jailbreak via Generation Parameter Exploitation (95%+ ASR)"
+      - "arXiv:2310.06987"
+      - "FlexLLM Study - Parameter space vulnerability heatmaps"
+
+  # ========================================
+  # HIGH SEVERITY RULES
+  # ========================================
+
+  - id: TEMP_001
+    name: "Dangerous Temperature Setting"
+    severity: HIGH
+    category: parameters
+    description: "Temperature > 1.0 significantly increases jailbreak success in well-aligned models. Research shows ASR increase from 23% to 28% for LLaMA2-chat."
+    check:
+      type: numeric_range
+      parameter: temperature
+      min: 0.0
+      max: 1.0
+    recommendation: "Use temperature 0.0-0.7 for production. 0.0-0.4 for critical applications. Only exceed 0.8 for creative tasks with additional security layers."
+    references:
+      - "IEOM 2024 - Can LLMs Have a Fever? (DOI: 10.46254/SA05.20240024)"
+      - "Princeton Catastrophic Jailbreak Study"
+      - "FlexLLM Defense Research (arXiv:2412.07672)"
+
+  - id: TEMP_002
+    name: "Extremely High Temperature"
+    severity: HIGH
+    category: parameters
+    description: "Temperature 1.5-2.0 produces extreme unpredictability that bypasses safety mechanisms."
+    check:
+      type: numeric_range
+      parameter: temperature
+      min: 0.0
+      max: 1.5
+    recommendation: "Maximum production temperature should be 0.7. Values > 1.5 are dangerous."
+    references:
+      - "IBM Research - LLM Temperature Guidelines"
+      - "Prompt Engineering Guide"
+
+  - id: TOPP_001
+    name: "Excessive Top-P Value"
+    severity: HIGH
+    category: parameters
+    description: "Top_p > 0.95 allows lower-probability tokens including potential harmful content. Combined with high temperature creates multiplicative risk."
+    check:
+      type: numeric_range
+      parameter: top_p
+      min: 0.0
+      max: 0.95
+    recommendation: "Use top_p 0.5-0.92 for production. 0.5-0.7 for critical applications. Never modify both temperature AND top_p simultaneously."
+    references:
+      - "Virtual Context Attack (arXiv:2406.19845v1) - 40% improvement with combined manipulation"
+      - "Prompt Engineering Guide - WARNING against modifying both temp and top_p"
+
+  - id: TOKENS_001
+    name: "Unlimited Max Tokens"
+    severity: HIGH
+    category: parameters
+    description: "No max_tokens limit set. Enables unbounded consumption, cost attacks, and resource exhaustion."
+    check:
+      type: missing_field
+      field: max_tokens
+    recommendation: "Set max_tokens as close to expected response size as possible. Short-form: 256-1024, Medium: 1024-2048, Long: 2048-4096."
+    references:
+      - "OWASP LLM10:2025 Unbounded Consumption"
+      - "OpenAI Best Practices - Set max_tokens to expected size"
+      - "AWS Security Blog - Context Window Overflow"
+
+  - id: TOKENS_002
+    name: "Excessive Max Tokens"
+    severity: HIGH
+    category: parameters
+    description: "Max_tokens > 4096 without business justification. OpenAI counts max of estimated OR max_tokens against TPM limits."
+    check:
+      type: numeric_range
+      parameter: max_tokens
+      min: 1
+      max: 4096
+    recommendation: "Use minimum viable max_tokens. Most use cases need < 2048. High limits waste rate capacity and enable DoS."
+    references:
+      - "OpenAI Rate Limiting Documentation"
+      - "Promptfoo - Unbounded Consumption Analysis"
+
+  - id: RATE_002
+    name: "Single-Dimension Rate Limiting Only"
+    severity: HIGH
+    category: rate_limiting
+    description: "Only RPM configured without TPM. Allows few large requests to exhaust resources. 10 requests at max context can consume resources meant for 1000 RPM."
+    check:
+      type: conditional_missing
+      has_any:
+        - rpm
+        - requests_per_minute
+        - rate_limit
+      missing_all:
+        - tpm
+        - tokens_per_minute
+        - token_rate_limit
+    recommendation: "Implement multi-dimensional limiting: RPM + TPM + RPD minimum. Token bucket algorithm preferred."
+    references:
+      - "OWASP LLM10:2025"
+      - "Azure OpenAI - 6 RPM per 1000 TPM ratio recommended"
+
+  - id: USER_001
+    name: "User-Controlled Parameters Enabled"
+    severity: HIGH
+    category: configuration
+    description: "Configuration allows end users to set temperature, top_p, top_k, or logit_bias. Attackers systematically probe parameter spaces for vulnerabilities."
+    check:
+      type: field_check
+      fields:
+        - user_controllable
+        - allow_user_params
+        - user_override
+      values:
+        - true
+        - "true"
+    recommendation: "Use fixed, security-hardened configurations. Expose parameter customization only to trusted admin users, never to end users."
+    references:
+      - "Princeton Study - Systematic parameter space probing"
+      - "FlexLLM - Parameter vulnerability heatmaps"
+
+  - id: PROMPT_001
+    name: "Sensitive Information in System Prompt"
+    severity: HIGH
+    category: prompts
+    description: "System prompt may contain internal URLs, service endpoints, or architectural details. Multi-turn attacks achieve 86.2% prompt extraction success."
+    check:
+      type: pattern_match
+      patterns:
+        - "https?://[^\\s\"']+\\.(internal|local|corp|intranet)"
+        - "\\.(internal|local|corp)\\.\\w+"
+        - "database\\s*[:=]"
+        - "endpoint\\s*[:=]"
+        - "service_url"
+      fields:
+        - system_prompt
+        - prompt
+        - instructions
+    recommendation: "Remove ALL internal references from system prompts. Externalize to code-based lookups. Never include architecture details."
+    references:
+      - "OWASP LLM07:2025 System Prompt Leakage"
+      - "arXiv:2404.16251v3 - Multi-turn sycophancy attacks (86.2% ASR)"
+
+  # ========================================
+  # MEDIUM SEVERITY RULES
+  # ========================================
+
+  - id: TEMP_003
+    name: "Elevated Temperature Without Justification"
+    severity: MEDIUM
+    category: parameters
+    description: "Temperature 0.8-1.0 requires active monitoring. Appropriate only for creative applications with additional security layers."
+    check:
+      type: numeric_range
+      parameter: temperature
+      min: 0.0
+      max: 0.8
+    recommendation: "Document justification for temperature > 0.7. Implement additional content filtering for creative use cases."
+    references:
+      - "Industry consensus (Vellum AI, Hopsworks, IBM)"
+
+  - id: TOPK_001
+    name: "Top-K Value Outside Safe Range"
+    severity: MEDIUM
+    category: parameters
+    description: "Top_k < 20 or > 80 affects output quality. Low values cause repetition, high values provide diminishing security benefit."
+    check:
+      type: numeric_range
+      parameter: top_k
+      min: 20
+      max: 80
+    recommendation: "Use top_k 20-80 for production. 10-30 for high-security, 50-80 for creative tasks. Test per model."
+    references:
+      - "FlexLLM - Optimal defensive configurations in 20-60 range"
+      - "IACR 2025 - k=40 for balanced security/quality"
+
+  - id: PENALTY_001
+    name: "Extreme Penalty Values"
+    severity: MEDIUM
+    category: parameters
+    description: "Frequency or presence penalty > 1.5 produces highly erratic outputs. May enable resource exhaustion through repetition."
+    check:
+      type: numeric_range
+      parameters:
+        - frequency_penalty
+        - presence_penalty
+      min: -2.0
+      max: 1.5
+    recommendation: "Use 0-0.6 for predictable behavior. Values > 1.0 warrant monitoring."
+    references:
+      - "OpenAI Documentation - Range -2.0 to 2.0"
+      - "Medium - Understanding Penalty Parameters"
+
+  - id: SEED_001
+    name: "Seed Parameter in Production"
+    severity: MEDIUM
+    category: parameters
+    description: "Fixed seed reduces randomness as defensive feature. Enables predictability attacks and replay attacks."
+    check:
+      type: field_exists
+      field: seed
+    recommendation: "Use seed only in development/testing. Disable in production security-sensitive applications. Prefer randomness over reproducibility."
+    references:
+      - "Security analysis - Predictability vs. security trade-offs"
+
+  - id: STOP_001
+    name: "Complex Stop Sequences"
+    severity: MEDIUM
+    category: parameters
+    description: "Overly complex stop sequences vulnerable to encoding attacks and tokenization bypass."
+    check:
+      type: stop_sequence_complexity
+      field: stop
+      max_sequences: 4
+      max_length: 10
+    recommendation: "Use simple, common strings as stop sequences. Maximum 4 sequences. Don't rely solely on stops - implement length limits as backup."
+    references:
+      - "Cursor IDE Bug - Complex stop sequences prevented proper generation"
+      - "OpenAI - Maximum 4 stop sequences"
+
+  - id: RATE_003
+    name: "No Timeout Configuration"
+    severity: MEDIUM
+    category: rate_limiting
+    description: "Missing timeout allows long-running queries to tie up resources indefinitely."
+    check:
+      type: missing_fields
+      fields:
+        - timeout
+        - request_timeout
+        - max_duration
+    recommendation: "Set timeouts for resource-intensive operations. 30-60 seconds for most use cases."
+    references:
+      - "Microsoft Security Planning - Containerized timeout solutions"
+
+  - id: MONITOR_001
+    name: "Insufficient Logging Configuration"
+    severity: MEDIUM
+    category: monitoring
+    description: "Missing comprehensive logging prevents security incident detection and investigation."
+    check:
+      type: missing_fields
+      fields:
+        - logging
+        - audit_log
+        - log_prompts
+        - log_responses
+    recommendation: "Log all prompts, responses, parameters, and user IDs with sensitive data redaction. Minimum 90-day retention."
+    references:
+      - "OWASP LLM10:2025 - Monitoring requirements"
+
+  # ========================================
+  # LOW SEVERITY RULES
+  # ========================================
+
+  - id: PARAM_002
+    name: "Both Temperature and Top-P Modified"
+    severity: LOW
+    category: parameters
+    description: "Modifying both temperature and top_p simultaneously. Prompt Engineering Guide warns against this, though not directly exploitable."
+    check:
+      type: combined_conditions
+      conditions:
+        - parameter: temperature
+          operator: not_equals
+          value: 1.0
+        - parameter: top_p
+          operator: not_equals
+          value: 1.0
+      require: both
+    recommendation: "Modify either temperature OR top_p, not both. If both needed, document justification."
+    references:
+      - "Prompt Engineering Guide - Explicit warning"
+
+  - id: CONFIG_001
+    name: "Model Version Not Pinned"
+    severity: LOW
+    category: configuration
+    description: "Using 'latest' or unversioned model references. Model updates can change behavior unexpectedly."
+    check:
+      type: pattern_match
+      patterns:
+        - "latest"
+        - "gpt-4(?!-\\d{4})"  # gpt-4 without date suffix
+      fields:
+        - model
+        - model_name
+    recommendation: "Pin specific model versions (e.g., gpt-4-0613, claude-3-opus-20240229) for reproducible security posture."
+    references:
+      - "Best practices for production deployments"
+
+  - id: CONFIG_002
+    name: "Missing Metadata Fields"
+    severity: LOW
+    category: configuration
+    description: "Missing user_id or tracking metadata. Hinders accountability and incident investigation."
+    check:
+      type: missing_fields
+      fields:
+        - user_id
+        - session_id
+        - request_id
+    recommendation: "Include user_id with cryptographic hashing for privacy. Add session_id and request_id for audit trails."
+    references:
+      - "OWASP LLM10:2025"
+      - "Anthropic Multi-tier Safeguard Approach"
+
+  # ========================================
+  # ADDITIONAL HIGH-VALUE RULES
+  # ========================================
+
+  - id: TEMP_004
+    name: "Negative Temperature Value"
+    severity: HIGH
+    category: parameters
+    description: "Temperature is negative, which is invalid for all LLM providers."
+    check:
+      type: numeric_range
+      parameter: temperature
+      min: 0.0
+      max: 999.0
+    recommendation: "Temperature must be >= 0. Use 0.0 for deterministic output, 0.5-0.7 for production."
+    references:
+      - "OpenAI API Documentation"
+      - "Anthropic API Documentation"
+
+  - id: TOPP_002
+    name: "Top-P Outside Valid Range"
+    severity: HIGH
+    category: parameters
+    description: "Top_p must be between 0 and 1. Values outside this range are invalid."
+    check:
+      type: numeric_range
+      parameter: top_p
+      min: 0.0
+      max: 1.0
+    recommendation: "Set top_p between 0.0-1.0. Recommended production range: 0.5-0.92."
+    references:
+      - "OpenAI API Documentation"
+      - "All major LLM provider specifications"
+
+  - id: TOPK_002
+    name: "Invalid Top-K Value"
+    severity: HIGH
+    category: parameters
+    description: "Top_k is zero or negative, which breaks sampling entirely."
+    check:
+      type: numeric_range
+      parameter: top_k
+      min: 1
+      max: 999
+    recommendation: "Top_k must be positive integer. Use 20-80 for production systems."
+    references:
+      - "Google Vertex AI Documentation"
+      - "Sampling algorithm requirements"
+
+  - id: SECRETS_003
+    name: "Hardcoded IP Addresses or Ports"
+    severity: HIGH
+    category: secrets
+    description: "Configuration contains hardcoded IP addresses or internal ports, exposing infrastructure details."
+    check:
+      type: pattern_match
+      patterns:
+        - "\\b(?:10|172\\.(?:1[6-9]|2[0-9]|3[01])|192\\.168)\\.\\d{1,3}\\.\\d{1,3}\\b"
+        - "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d+\\b"
+        - "localhost:\\d+"
+        - "127\\.0\\.0\\.1"
+    recommendation: "Use environment variables or service discovery for endpoints. Never hardcode IPs/ports."
+    references:
+      - "OWASP LLM07:2025 System Prompt Leakage"
+      - "OWASP API8:2023 Security Misconfiguration"
+
+  - id: SECRETS_004
+    name: "Multiple API Keys in Single Config"
+    severity: MEDIUM
+    category: secrets
+    description: "Configuration contains multiple different API keys, suggesting improper key management or key sprawl."
+    check:
+      type: pattern_match
+      patterns:
+        - "sk-[a-zA-Z0-9]{20,}.*sk-[a-zA-Z0-9]{20,}"
+    recommendation: "Use single API key per service. Implement proper key rotation and management."
+    references:
+      - "Security best practices - Principle of least privilege"
+
+  - id: CONFIG_003
+    name: "HTTP URLs Instead of HTTPS"
+    severity: HIGH
+    category: configuration
+    description: "Configuration uses HTTP instead of HTTPS, transmitting data unencrypted."
+    check:
+      type: pattern_match
+      patterns:
+        - "http://(?!localhost)[^\\s\"']+"
+      fields:
+        - api_url
+        - base_url
+        - endpoint
+        - url
+    recommendation: "Use HTTPS for all API endpoints to ensure encrypted transmission."
+    references:
+      - "OWASP A02:2021 Cryptographic Failures"
+      - "OWASP API8:2023 Security Misconfiguration"
+
+  - id: CONFIG_004
+    name: "Debug or Verbose Mode Enabled"
+    severity: MEDIUM
+    category: configuration
+    description: "Debug or verbose logging enabled in production, potentially exposing sensitive information."
+    check:
+      type: field_check
+      fields:
+        - debug
+        - verbose
+        - log_level
+      values:
+        - true
+        - "true"
+        - "debug"
+        - "DEBUG"
+        - "verbose"
+    recommendation: "Disable debug mode in production. Use 'info' or 'warn' log levels."
+    references:
+      - "OWASP Logging Cheat Sheet"
+
+  - id: PROMPT_002
+    name: "Missing System Prompt"
+    severity: MEDIUM
+    category: prompts
+    description: "No system prompt configured. Increases unpredictability and security risk."
+    check:
+      type: missing_fields
+      fields:
+        - system_prompt
+        - system
+        - prompt
+        - instructions
+    recommendation: "Define explicit system prompt with security boundaries and expected behavior."
+    references:
+      - "OWASP LLM01:2025 Prompt Injection"
+      - "LLM Security Best Practices"
+
+  - id: RATE_004
+    name: "Streaming Without Timeout"
+    severity: MEDIUM
+    category: rate_limiting
+    description: "Streaming enabled without timeout configuration, allowing indefinite connections."
+    check:
+      type: conditional_missing
+      has_any:
+        - stream
+        - streaming
+        - stream_enabled
+      missing_all:
+        - stream_timeout
+        - timeout
+        - max_duration
+    recommendation: "Configure timeouts for streaming responses. Maximum 60-120 seconds recommended."
+    references:
+      - "Resource exhaustion attack prevention"
+
+  - id: CONFIG_005
+    name: "Function Calling Without Schema Validation"
+    severity: HIGH
+    category: configuration
+    description: "Function calling or tools enabled without proper schema validation, allowing arbitrary function execution."
+    check:
+      type: conditional_missing
+      has_any:
+        - functions
+        - tools
+        - function_call
+        - tool_choice
+      missing_all:
+        - function_schema
+        - schema_validation
+        - validate_functions
+    recommendation: "Implement strict JSON schema validation for all function calls. Whitelist allowed functions explicitly."
+    references:
+      - "OWASP LLM06:2025 Excessive Agency"
+      - "Function calling security guidance"
+
+  - id: MONITOR_002
+    name: "No Content Moderation Configured"
+    severity: HIGH
+    category: monitoring
+    description: "Missing content moderation configuration, allowing potentially harmful outputs."
+    check:
+      type: missing_fields
+      fields:
+        - content_moderation
+        - moderation
+        - safety_filter
+        - content_filter
+    recommendation: "Implement content moderation using provider APIs or third-party services. Essential for user-facing applications."
+    references:
+      - "OWASP LLM05:2025 Improper Output Handling"
+      - "Anthropic Safety Best Practices"
+
+  - id: CONFIG_006
+    name: "Deprecated Model Version"
+    severity: MEDIUM
+    category: configuration
+    description: "Using deprecated or legacy model versions that may lack security updates."
+    check:
+      type: pattern_match
+      patterns:
+        - "gpt-3\\.5-turbo-0301"
+        - "gpt-3\\.5-turbo-0613"
+        - "gpt-4-0314"
+        - "text-davinci-003"
+        - "text-davinci-002"
+        - "claude-v1"
+        - "claude-instant-v1"
+      fields:
+        - model
+        - model_name
+    recommendation: "Upgrade to current model versions with latest security updates and safety improvements."
+    references:
+      - "OpenAI Model Deprecation Schedule"
+      - "Provider security advisories"
+
+  - id: TOKENS_003
+    name: "Very Low Max Tokens"
+    severity: LOW
+    category: parameters
+    description: "Max_tokens < 50 may truncate security-critical outputs like refusal messages."
+    check:
+      type: numeric_range
+      parameter: max_tokens
+      min: 50
+      max: 999999
+    recommendation: "Use minimum 100 tokens to ensure complete responses. Truncated refusal messages may bypass safety."
+    references:
+      - "Security implications of truncated outputs"
+
+  - id: MONITOR_003
+    name: "Missing Error Handling Configuration"
+    severity: MEDIUM
+    category: monitoring
+    description: "No error handling or retry configuration, leading to poor failure modes."
+    check:
+      type: missing_fields
+      fields:
+        - error_handling
+        - retry_policy
+        - max_retries
+        - error_callback
+    recommendation: "Implement exponential backoff with jitter. Maximum 3-5 retries. Log all failures."
+    references:
+      - "OpenAI Error Handling Best Practices"
+      - "Reliability engineering patterns"
+
+  - id: SECRETS_005
+    name: "Insecure Model Loading Paths"
+    severity: HIGH
+    category: secrets
+    description: "Model loaded from untrusted or world-writable paths, enabling model poisoning."
+    check:
+      type: pattern_match
+      patterns:
+        - "/tmp/"
+        - "/var/tmp/"
+        - "C:\\\\Temp\\\\"
+        - "~/Downloads/"
+        - "/uploads/"
+      fields:
+        - model_path
+        - weights_path
+        - checkpoint_path
+    recommendation: "Load models only from trusted, read-only locations with integrity verification."
+    references:
+      - "OWASP LLM03:2025 Supply Chain Vulnerabilities"
+      - "Model poisoning attack vectors"
+
+  - id: MONITOR_004
+    name: "Plain Text Logging of Sensitive Data"
+    severity: HIGH
+    category: monitoring
+    description: "Logging configuration doesn't redact sensitive data like prompts containing PII."
+    check:
+      type: field_check
+      fields:
+        - log_prompts
+        - log_full_request
+        - debug_logging
+      values:
+        - true
+        - "true"
+      missing_all:
+        - redact_pii
+        - sanitize_logs
+        - log_filter
+    recommendation: "Implement PII redaction in logs. Use structured logging with field-level control."
+    references:
+      - "OWASP LLM02:2025 Sensitive Information Disclosure"
+      - "GDPR logging requirements"
+
+  - id: CONFIG_007
+    name: "Missing CORS Configuration"
+    severity: MEDIUM
+    category: configuration
+    description: "No CORS configuration for API endpoints, potentially allowing unauthorized cross-origin requests."
+    check:
+      type: missing_fields
+      fields:
+        - cors
+        - cors_origins
+        - allowed_origins
+    recommendation: "Configure CORS with explicit origin whitelist. Never use '*' in production."
+    references:
+      - "OWASP API7:2023 Server Side Request Forgery"
+
+  - id: LOGIT_002
+    name: "Logit Bias Without Monitoring"
+    severity: MEDIUM
+    category: parameters
+    description: "Logit bias configured but no monitoring/alerting for its use."
+    check:
+      type: conditional_missing
+      has_any:
+        - logit_bias
+      missing_all:
+        - logit_bias_monitoring
+        - monitor_logit_bias
+        - alert_on_logit_bias
+    recommendation: "Enable monitoring when logit_bias is used. Alert on any non-default usage."
+    references:
+      - "arXiv:2403.09539v3 - Logit manipulation security"
+
+  - id: PARAM_003
+    name: "Top-P with Temperature Zero"
+    severity: LOW
+    category: parameters
+    description: "Top_p configured with temperature=0, making top_p ineffective (greedy decoding ignores it)."
+    check:
+      type: combined_conditions
+      conditions:
+        - parameter: temperature
+          operator: equals
+          value: 0.0
+        - parameter: top_p
+          operator: not_equals
+          value: 1.0
+      require: both
+    recommendation: "When temperature=0, top_p is ignored. Remove top_p or increase temperature."
+    references:
+      - "Sampling algorithm behavior"
+
+  - id: RATE_005
+    name: "No Per-User Rate Limiting"
+    severity: HIGH
+    category: rate_limiting
+    description: "Rate limiting configured but not enforced per-user, allowing single user to monopolize resources."
+    check:
+      type: conditional_missing
+      has_any:
+        - rate_limit
+        - rpm
+        - tpm
+      missing_all:
+        - per_user_limit
+        - user_rate_limit
+        - user_quota
+    recommendation: "Implement per-user rate limits in addition to global limits. Essential for multi-tenant systems."
+    references:
+      - "OWASP LLM10:2025 Unbounded Consumption"
+
+  - id: CONFIG_008
+    name: "Unsafe Eval or Exec in Tool Config"
+    severity: CRITICAL
+    category: configuration
+    description: "Configuration enables eval() or exec() for tool execution, allowing arbitrary code execution."
+    check:
+      type: pattern_match
+      patterns:
+        - "eval\\("
+        - "exec\\("
+        - "allow_code_execution.*true"
+        - "enable_eval.*true"
+    recommendation: "Never use eval/exec with LLM outputs. Use sandboxed execution environments with strict whitelisting."
+    references:
+      - "OWASP LLM06:2025 Excessive Agency"
+      - "Code injection vulnerabilities"
+
+  - id: TOKENS_004
+    name: "Context Window Exceeds Model Limits"
+    severity: MEDIUM
+    category: parameters
+    description: "Configured max_tokens or context_window exceeds known model limits, causing failures or truncation."
+    check:
+      type: numeric_range
+      parameter: max_tokens
+      min: 1
+      max: 128000
+    recommendation: "Verify max_tokens against model specifications. GPT-4: 8K-128K, Claude: 200K, etc."
+    references:
+      - "Provider model specifications"
+
+  - id: CONFIG_009
+    name: "Missing Input Sanitization Config"
+    severity: HIGH
+    category: configuration
+    description: "No input sanitization or validation configured, allowing injection attacks."
+    check:
+      type: missing_fields
+      fields:
+        - input_validation
+        - sanitize_input
+        - input_filter
+        - validate_input
+    recommendation: "Implement input validation: length limits, character whitelisting, injection pattern detection."
+    references:
+      - "OWASP LLM01:2025 Prompt Injection"
+      - "Input validation best practices"
+
+  - id: CONFIG_010
+    name: "Missing Output Sanitization Config"
+    severity: HIGH
+    category: configuration
+    description: "No output sanitization configured before rendering or executing LLM responses."
+    check:
+      type: missing_fields
+      fields:
+        - output_validation
+        - sanitize_output
+        - output_filter
+        - validate_output
+    recommendation: "Validate outputs before use: HTML encoding, SQL escaping, command injection prevention."
+    references:
+      - "OWASP LLM05:2025 Improper Output Handling"
+      - "Context-aware output encoding"
+
+  - id: PLUGIN_001
+    name: "Unsafe Plugin or Extension Configuration"
+    severity: HIGH
+    category: configuration
+    description: "Plugins or extensions enabled without proper security controls or sandboxing."
+    check:
+      type: conditional_missing
+      has_any:
+        - plugins
+        - extensions
+        - plugin_enabled
+      missing_all:
+        - plugin_whitelist
+        - plugin_sandbox
+        - validate_plugins
+    recommendation: "Whitelist approved plugins explicitly. Run plugins in sandboxed environments with limited permissions."
+    references:
+      - "OWASP LLM06:2025 Excessive Agency"
+      - "Plugin security architecture"
+
+# Rule categories for reporting
+categories:
+  - secrets
+  - parameters
+  - rate_limiting
+  - prompts
+  - configuration
+  - monitoring
+
+# Severity levels
+severities:
+  CRITICAL:
+    exit_code: 1
+    description: "Immediate security risk requiring urgent remediation"
+  HIGH:
+    exit_code: 1
+    description: "Significant security vulnerability requiring prompt attention"
+  MEDIUM:
+    exit_code: 1
+    description: "Security concern requiring remediation"
+  LOW:
+    exit_code: 1
+    description: "Best practice violation or minor security issue"

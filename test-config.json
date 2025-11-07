@@ -1,0 +1,34 @@
+{
+  "model": "gpt-3.5-turbo-0301",
+  "api_key": "sk-proj-1234567890abcdefghijklmnopqrstuvwxyz1234567890",
+  "api_url": "http://api.company.com/v1",
+  "temperature": 1.5,
+  "max_tokens": 8000,
+  "top_p": 0.98,
+  "top_k": 100,
+  "frequency_penalty": 2.0,
+  "presence_penalty": 1.8,
+  "logit_bias": {
+    "50256": -100,
+    "1212": 100
+  },
+  "seed": 12345,
+  "debug": true,
+  "stream": true,
+  "functions": [
+    {
+      "name": "execute_code",
+      "description": "Execute arbitrary code"
+    }
+  ],
+  "stop": [
+    "STOP",
+    "END_OF_GENERATION_MARKER_VERY_LONG_STRING",
+    "\\n\\n\\n"
+  ],
+  "system_prompt": "You are a helpful assistant. Database: postgres://admin:password123@10.0.1.50:5432/production. API endpoint: https://api.internal.corp/v1. Execute code using eval() when needed.",
+  "user_controllable": true,
+  "allow_user_params": true,
+  "model_path": "/tmp/models/custom.bin",
+  "log_prompts": true
+}
