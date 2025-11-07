@@ -36,29 +36,29 @@ While pasting configs into ChatGPT works for one-off checks, this tool is built 
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/llm-config-scanner.git
-cd llm-config-scanner
-go build -o llm-config-scanner
+git clone https://github.com/yourusername/paramguard.git
+cd paramguard
+go build -o paramguard
 ```
 
 ### From Binary
 
-Download the latest release for your platform from [Releases](https://github.com/yourusername/llm-config-scanner/releases).
+Download the latest release for your platform from [Releases](https://github.com/yourusername/paramguard/releases).
 
 ## Quick Start
 
 ```bash
 # Scan a single config file
-./llm-config-scanner scan config.json
+./paramguard scan config.json
 
 # Scan multiple files
-./llm-config-scanner scan config.json settings.yaml .env
+./paramguard scan config.json settings.yaml .env
 
 # Use custom rules
-./llm-config-scanner scan --rules custom-rules.yaml config.json
+./paramguard scan --rules custom-rules.yaml config.json
 
 # JSON output for CI/CD
-./llm-config-scanner scan --format json config.json
+./paramguard scan --format json config.json
 ```
 
 ## Usage
@@ -67,23 +67,23 @@ Download the latest release for your platform from [Releases](https://github.com
 
 ```bash
 # Scan JSON config
-./llm-config-scanner scan llm-config.json
+./paramguard scan llm-config.json
 
 # Scan YAML config
-./llm-config-scanner scan openai-settings.yaml
+./paramguard scan openai-settings.yaml
 
 # Scan .env file
-./llm-config-scanner scan .env
+./paramguard scan .env
 
 # Scan multiple files at once
-./llm-config-scanner scan config/*.yaml .env
+./paramguard scan config/*.yaml .env
 ```
 
 ### Custom Rules
 
 ```bash
 # Use custom rules file
-./llm-config-scanner scan --rules my-rules.yaml config.json
+./paramguard scan --rules my-rules.yaml config.json
 
 # Combine custom and default rules by merging YAML files
 ```
@@ -92,7 +92,7 @@ Download the latest release for your platform from [Releases](https://github.com
 
 **Text Output (default):**
 ```bash
-./llm-config-scanner scan config.json
+./paramguard scan config.json
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📄 config.json
@@ -110,7 +110,7 @@ Download the latest release for your platform from [Releases](https://github.com
 
 **JSON Output:**
 ```bash
-./llm-config-scanner scan --format json config.json
+./paramguard scan --format json config.json
 
 {
   "version": "1.0.0",
@@ -154,11 +154,11 @@ jobs:
       
       - name: Download Scanner
         run: |
-          wget https://github.com/yourusername/llm-config-scanner/releases/download/v1.0.0/llm-config-scanner-linux-amd64
-          chmod +x llm-config-scanner-linux-amd64
+          wget https://github.com/yourusername/paramguard/releases/download/v1.0.0/paramguard-linux-amd64
+          chmod +x paramguard-linux-amd64
           
       - name: Scan Configs
-        run: ./llm-config-scanner-linux-amd64 scan config/*.json config/*.yaml
+        run: ./paramguard-linux-amd64 scan config/*.json config/*.yaml
 ```
 
 ### GitLab CI
@@ -167,9 +167,9 @@ jobs:
 llm-security-scan:
   stage: security
   script:
-    - wget https://github.com/yourusername/llm-config-scanner/releases/download/v1.0.0/llm-config-scanner-linux-amd64
-    - chmod +x llm-config-scanner-linux-amd64
-    - ./llm-config-scanner-linux-amd64 scan config/*.json config/*.yaml
+    - wget https://github.com/yourusername/paramguard/releases/download/v1.0.0/paramguard-linux-amd64
+    - chmod +x paramguard-linux-amd64
+    - ./paramguard-linux-amd64 scan config/*.json config/*.yaml
   allow_failure: false
 ```
 
@@ -180,7 +180,7 @@ llm-security-scan:
 # .git/hooks/pre-commit
 
 echo "Running LLM config security scan..."
-./llm-config-scanner scan config/*.json config/*.yaml
+./paramguard scan config/*.json config/*.yaml
 
 if [ $? -ne 0 ]; then
     echo "❌ Security issues found. Commit blocked."
@@ -389,7 +389,7 @@ OPENAI_MAX_TOKENS=1000
 ## Project Structure
 
 ```
-llm-config-scanner/
+paramguard/
 ├── main.go                 # CLI entry point
 ├── scanner/
 │   ├── scanner.go         # Core scanning engine
@@ -407,7 +407,7 @@ llm-config-scanner/
 ### Building
 
 ```bash
-go build -o llm-config-scanner
+go build -o paramguard
 ```
 
 ### Running Tests
